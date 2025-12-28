@@ -1,0 +1,150 @@
+import os
+import subprocess
+import sys
+
+# ---------- AUTO-INSTALL RICH ----------
+try:
+    import rich
+except ImportError:
+    print("Rich library not found. Installing...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "rich"])
+    import rich
+
+import sqlite3
+from datetime import datetime
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
+from rich.align import Align
+import time
+
+console = Console()
+
+RATE_PER_MINUTE = 2
+
+# ---------- DB SETUP ----------
+conn = sqlite3.connect("cyber_cafe.db")
+cursor = conn.cursor()
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_name TEXT NOT NULL,
+    computer_no INTEGER NOT NULL,
+    start_time TEXT NOT NULL,
+    end_time TEXT,
+    total_minutes INTEGER,
+    amount INTEGER
+)
+""")
+conn.commit()
+
+# ---------- WELCOME ----------
+def welcome():
+    banner = Text("⚡ CYBER CAFE SYSTEM ⚡", justify="center")
+    banner.stylize("bold magenta")
+    # Added simple animation loop
+    for i in range(3):
+        console.clear()
+        console.print(Align.center(banner))
+        time.sleep(0.3)
+    console.print(Panel("Welcome to the future of cafe billing!", style="cyan", subtitle="Neon CLI"))
+
+# ---------- START ----------
+def start_session():
+    console.print("\n[bold green]>>> START SESSION[/bold green]")
+    name = input("Enter Customer Name: ")
+    try:
+        pc = int(input("Enter Computer Number: "))
+    except ValueError:
+        console.print("[bold red]Error: Computer Number must be an integer![/bold red]")
+        return
+
+    start = datetime.now().isoformat()
+
+    cursor.execute("INSERT INTO sessions(customer_name, computer_no, start_time) VALUES(?,?,?)", (name, pc, start))
+    conn.commit()
+    sid = cursor.lastrowid
+
+    console.print(Panel(f"Session started for [bold cyan]{name}[/bold cyan] on PC [bold yellow]{pc}[/bold yellow]",
+                        title=f"Session ID: {sid}", style="magenta"))
+
+# ---------- END ----------
+def end_session():
+    console.print("\n[bold red]>>> END SESSION[/bold red]")
+    try:
+        sid = int(input("Enter Session ID: "))
+    except ValueError:
+        console.print("[bold red]Error: Session ID must be an integer![/bold red]")
+        return
+
+    cursor.execute("SELECT start_time, computer_no, customer_name FROM sessions WHERE id=? AND end_time IS NULL", (sid,))
+    r = cursor.fetchone()
+
+    if r:
+        start_time = datetime.fromisoformat(r[0])
+        end_time = datetime.now()
+        pc = r[1]
+        name = r[2]
+
+        # Calculate time difference
+        mins = max(1, int((end_time - start_time).total_seconds() / 60))
+        amt = mins * RATE_PER_MINUTE
+
+        cursor.execute("UPDATE sessions SET end_time=?, total_minutes=?, amount=? WHERE id=?", 
+                       (end_time.isoformat(), mins, amt, sid))
+        conn.commit()
+
+        bill = f"[bold yellow]Customer:[/bold yellow] {name}\n[bold yellow]PC No:[/bold yellow] {pc}\n[bold yellow]Time Used:[/bold yellow] {mins} min\n[bold green]Amount:[/bold green] ₹{amt}"
+        console.print(Panel(bill, title="🧾 BILL RECEIPT", style="bright_blue"))
+    else:
+        console.print(Panel("Invalid or already closed session!", title="Error", style="bold red"))
+
+# ---------- VIEW ----------
+def view_sessions():
+    console.print("\n[bold blue]>>> ALL SESSIONS[/bold blue]")
+    table = Table(title="💻 Active & Past Sessions", show_lines=True)
+
+    columns = ["ID", "Customer", "PC No", "Start Time", "End Time", "Minutes", "Amount ₹"]
+    for c in columns:
+        table.add_column(c, justify="center", style="cyan")
+
+    data = cursor.execute("SELECT * FROM sessions").fetchall()
+    if data:
+        for s in data:
+            # Convert all elements to string for the table
+            table.add_row(*map(str, s))
+    else:
+        console.print("[bold red]No session records found![/bold red]")
+        return
+
+    console.print(table)
+
+# ---------- MENU ----------
+def main():
+    welcome()
+    while True:
+        menu = """
+[1] 🟢 Start Session
+[2] 🔴 End Session
+[3] 🔵 View Sessions
+[4] ⚪ Exit
+"""
+        console.print(Panel(menu, title="🎮 MAIN MENU", style="bold magenta"))
+        ch = input("Select Option: ")
+
+        if ch == "1": start_session()
+        elif ch == "2": end_session()
+        elif ch == "3": view_sessions()
+        elif ch == "4":
+            console.print("\n[bold white]Shutting down system...[/bold white]")
+            time.sleep(0.5)
+            break
+        else:
+            console.print(Panel("Invalid option!", style="bold red"))
+
+    conn.close()
+
+# Fixed the name check here
+if __name__ == "__main__":
+    main()
